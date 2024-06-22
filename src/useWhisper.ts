@@ -456,6 +456,10 @@ export const useWhisper: UseWhisperHook = (config) => {
    * - chunks are concatenated in succession
    * - set transcript text with interim result
    */
+  let chunkCount = 0; // Counter for the chunks
+  const maxChunks = 4; // Maximum number of chunks to collect before sending to OpenAI
+  let previousChunk: Blob | null = null; // To store the last chunk from the previous set
+  
   const onDataAvailable = async (data: Blob) => {
     console.log('onDataAvailable', data)
     try {
@@ -465,27 +469,38 @@ export const useWhisper: UseWhisperHook = (config) => {
           const buffer = await data.arrayBuffer()
           const mp3chunk = encoder.current.encodeBuffer(new Int16Array(buffer))
           const mp3blob = new Blob([mp3chunk], { type: 'audio/mpeg' })
-          chunks.current = [mp3blob]
-        }
-        const recorderState = await recorder.current.getState()
-        if (recorderState === 'recording') {
-          const blob = new Blob(chunks.current, {
-            type: 'audio/mpeg',
-          })
-          const file = new File([blob], 'speech.mp3', {
-            type: 'audio/mpeg',
-          })
-          const text = await onWhispered(file)
-          console.log('onInterim', { text })
-          if (text) {
-            setTranscript((prev) => ({ ...prev, text }))
+          chunks.current.push(mp3blob)
+          chunkCount++;
+  
+          if (chunkCount >= maxChunks) {
+            // Prepare the chunks to send to OpenAI
+            const chunksToSend = previousChunk ? [previousChunk, ...chunks.current.slice(1)] : chunks.current;
+            const blob = new Blob(chunksToSend, { type: 'audio/mpeg' })
+            const file = new File([blob], 'speech.mp3', { type: 'audio/mpeg' })
+            const text = await onWhispered(file)
+            console.log('onInterim', { text })
+            if (text) {
+              setTranscript((prev) => ({ ...prev, text }))
+            }
+  
+            // Reset chunk counter and prepare for the next set of chunks
+            previousChunk = chunks.current[chunks.current.length - 1]; // Save the last chunk
+            chunkCount = 0;
+            chunks.current = [];
           }
+        }
+  
+        const recorderState = await recorder.current.getState()
+        if (recorderState === 'recording' && chunkCount === 0) {
+          // Additional logic if needed when starting a new set of chunks
         }
       }
     } catch (err) {
       console.error(err)
     }
   }
+  
+
   // const onDataAvailable = async (data: Blob) => {
   //   console.log('onDataAvailable', data);
   //   try {
